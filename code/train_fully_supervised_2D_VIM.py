@@ -26,18 +26,18 @@ from config import get_config
 
 from dataloaders import utils
 from dataloaders.dataset import BaseDataSets, RandomGenerator, BaseDataSets_Synapse
-from networks.net_factory import net_factory
+# from networks.net_factory import net_factory
 from utils import losses, metrics, ramps
 from val_2D import test_single_volume, test_single_volume_ds
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str,
-                    default='../data/ACDC', help='Name of Experiment')
+                    default='../data/BUSI', help='Name of Experiment')
 parser.add_argument('--exp', type=str,
-                    default='ACDC/Fully_Supervised', help='experiment_name')
+                    default='BUSI/VIM', help='experiment_name')
 parser.add_argument('--model', type=str,
                     default='mambaunet', help='model_name')
-parser.add_argument('--num_classes', type=int,  default=4,
+parser.add_argument('--num_classes', type=int,  default=2,
                     help='output channel of network')
 
 parser.add_argument(
@@ -86,14 +86,46 @@ args = parser.parse_args()
 
 config = get_config(args)
 
-def patients_to_slices(dataset, patiens_num):
-    ref_dict = None
-    if "ACDC" in dataset:
-        ref_dict = {"3": 68, "7": 136,
-                    "14": 256, "21": 396, "28": 512, "35": 664, "140": 1312}
+# def patients_to_slices(dataset, patiens_num):
+#     ref_dict = None
+#     if "ACDC" in dataset:
+#         ref_dict = {"3": 68, "7": 136,
+#                     "14": 256, "21": 396, "28": 512, "35": 664, "140": 1312}
+#     else:
+#         print("Error")
+#     return ref_dict[str(patiens_num)]
+
+# def patients_to_slices(dataset_root, patiens_num):
+#     dataset_root = str(dataset_root)
+#     if "ACDC" in dataset_root:
+#         ref_dict = {"3": 68, "7": 136, "14": 256, "21": 396,
+#                     "28": 512, "35": 664, "140": 1312}
+#         return ref_dict[str(patiens_num)]
+#     else:
+#         # BUSI or other datasets using the same list/h5 format
+#         list_file = os.path.join(dataset_root, "train_slices.list")
+#         if not os.path.isfile(list_file):
+#             raise FileNotFoundError(f"Missing {list_file}. Convert your dataset first.")
+#         with open(list_file, "r") as f:
+#             all_train = [x.strip() for x in f.readlines() if x.strip()]
+#         total = len(all_train)
+#         # Use full set if labeled_num >= total, else cap to labeled_num
+#         return min(patiens_num, total)
+
+def patients_to_slices(dataset_root, labeled_num):
+    """For ACDC use the hard map; for BUSI (and others) use train list length."""
+    dataset_root = str(dataset_root)
+    if "ACDC" in dataset_root:
+        ref_dict = {"3": 68, "7": 136, "14": 256, "21": 396,
+                    "28": 512, "35": 664, "140": 1312}
+        return ref_dict[str(labeled_num)]
     else:
-        print("Error")
-    return ref_dict[str(patiens_num)]
+        list_file = os.path.join(dataset_root, "train_slices.list")
+        if not os.path.isfile(list_file):
+            raise FileNotFoundError(f"Missing {list_file}. Did you convert BUSI to H5 + lists?")
+        with open(list_file, "r") as f:
+            total = len([x.strip() for x in f if x.strip()])
+        return min(labeled_num, total)  # or just `return total` to always use all
 
 
 def train(args, snapshot_path):
@@ -106,15 +138,9 @@ def train(args, snapshot_path):
 
     # model = net_factory(net_type=args.model, in_chns=1, class_num=num_classes)
 
-
-
-
     model = VIM_seg(config, img_size=args.patch_size,
                      num_classes=args.num_classes).cuda()
-    # model.load_from(config)
-    # ff
-
-
+    model.load_from(config)
 
 
     db_train = BaseDataSets(base_dir=args.root_path, split="train", num=labeled_slice, transform=transforms.Compose([
@@ -126,7 +152,7 @@ def train(args, snapshot_path):
         random.seed(args.seed + worker_id)
 
     trainloader = DataLoader(db_train, batch_size=batch_size, shuffle=True,
-                             num_workers=16, pin_memory=True, worker_init_fn=worker_init_fn)
+                             num_workers=4, pin_memory=True, worker_init_fn=worker_init_fn)
     valloader = DataLoader(db_val, batch_size=1, shuffle=False,
                            num_workers=1)
 
