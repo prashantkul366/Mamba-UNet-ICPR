@@ -361,7 +361,7 @@ def train(args, snapshot_path):
             torch.save(model.state_dict(), save_best)
         else:
             epochs_no_improve += 1
-
+        print("epochs_no_improve:", epochs_no_improve)
         # early stop check
         if epochs_no_improve >= patience:
             logging.info(f"Early stopping: no val Dice improvement for {patience} epochs. Best Dice={best_performance:.4f}")
