@@ -129,44 +129,60 @@ config = get_config(args)
 #         with open(list_file, "r") as f:
 #             total = len([x.strip() for x in f if x.strip()])
 #         return min(labeled_num, total)  # or just `return total` to always use all
-
 @torch.no_grad()
 def run_validation(model, valloader, num_classes, patch_size, writer=None, iter_num=None):
     model.eval()
     metric_list = 0.0
+
     for _, sampled_batch in enumerate(valloader):
         img = sampled_batch["image"]
         lab = sampled_batch["label"]
 
-        # ensure numpy
-        if isinstance(img, torch.Tensor): img = img.cpu().numpy()
-        if isinstance(lab, torch.Tensor): lab = lab.cpu().numpy()
+        # --- ensure torch tensors with leading batch dim ---
+        # Accept numpy or torch; normalize to torch
+        if isinstance(img, np.ndarray):
+            img = torch.from_numpy(img)
+        if isinstance(lab, np.ndarray):
+            lab = torch.from_numpy(lab)
 
-        # ---- expand to (D,H,W) if needed ----
-        if img.ndim == 2:  # (H,W)
-            img = img[None, ...]
-        if lab.ndim == 2:  # (H,W)
-            lab = lab[None, ...]
+        # shapes we may see here:
+        # (H,W)               -> add D and B:  (1,1,H,W)
+        # (1,H,W) (our val dataset) -> add B:  (1,1,H,W)
+        # (D,H,W)             -> add B:        (1,D,H,W)
+        # (1,D,H,W)           -> OK
+        if img.ndim == 2:
+            img = img.unsqueeze(0).unsqueeze(0)         # (1,1,H,W)
+        elif img.ndim == 3:
+            img = img.unsqueeze(0)                      # (1,D,H,W)
+        # else: assume already (1,D,H,W)
 
+        if lab.ndim == 2:
+            lab = lab.unsqueeze(0).unsqueeze(0)         # (1,1,H,W)
+        elif lab.ndim == 3:
+            lab = lab.unsqueeze(0)                      # (1,D,H,W)
+        # else: assume already (1,D,H,W)
+
+        # send to same device as model if needed later (test_single_volume handles .cuda() on slices)
+        # call the existing evaluator (expects tensors)
         metric_i = test_single_volume(img, lab, model, classes=num_classes, patch_size=patch_size)
         metric_list += np.array(metric_i)
 
     metric_list = metric_list / len(valloader)
 
+    # logging
     if writer is not None and iter_num is not None:
         for class_i in range(num_classes - 1):
             writer.add_scalar(f'info/val_{class_i+1}_dice', metric_list[class_i, 0], iter_num)
             writer.add_scalar(f'info/val_{class_i+1}_hd95', metric_list[class_i, 1], iter_num)
 
-        mean_dice = float(np.mean(metric_list, axis=0)[0])
-        mean_hd95 = float(np.mean(metric_list, axis=0)[1])
+    mean_dice = float(np.mean(metric_list, axis=0)[0])
+    mean_hd95 = float(np.mean(metric_list, axis=0)[1])
+    if writer is not None and iter_num is not None:
         writer.add_scalar('info/val_mean_dice', mean_dice, iter_num)
         writer.add_scalar('info/val_mean_hd95', mean_hd95, iter_num)
-    else:
-        mean_dice = float(np.mean(metric_list, axis=0)[0])
-        mean_hd95 = float(np.mean(metric_list, axis=0)[1])
 
     return mean_dice, mean_hd95
+
 
 
 def train(args, snapshot_path):
