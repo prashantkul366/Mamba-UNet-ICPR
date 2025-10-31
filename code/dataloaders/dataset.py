@@ -112,8 +112,11 @@ class BUSIDataset(Dataset):
             if os.path.exists(mp):
                 sample_list.append(base)
 
-        if num is not None and split == "train":
-            sample_list = sample_list[:num]
+        # if num is not None and split == "train":
+        #     sample_list = sample_list[:num]
+
+        if self.split == "train" and isinstance(num, int) and num > 0:
+            self.sample_list = self.sample_list[:num]
 
         self.sample_list = sample_list
         print(f"[BUSIDataset] {split} total {len(self.sample_list)} samples")

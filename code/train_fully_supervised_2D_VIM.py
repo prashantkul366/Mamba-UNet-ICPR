@@ -80,7 +80,7 @@ parser.add_argument('--base_lr', type=float,  default=0.01,
 parser.add_argument('--patch_size', type=list,  default=[224, 224],
                     help='patch size of network input')
 parser.add_argument('--seed', type=int,  default=1337, help='random seed')
-parser.add_argument('--labeled_num', type=int, default=140,
+parser.add_argument('--labeled_num', type=int, default=99999,
                     help='labeled data')
 parser.add_argument('--early_stop_patience', type=int, default=100,
                     help='stop if no val Dice improvement for N epochs')
