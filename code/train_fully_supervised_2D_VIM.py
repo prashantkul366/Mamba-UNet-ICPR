@@ -134,30 +134,40 @@ config = get_config(args)
 def run_validation(model, valloader, num_classes, patch_size, writer=None, iter_num=None):
     model.eval()
     metric_list = 0.0
-    for i_batch, sampled_batch in enumerate(valloader):
-        metric_i = test_single_volume(
-            sampled_batch["image"],
-            sampled_batch["label"],
-            model,
-            classes=num_classes,
-            patch_size=patch_size
-        )
+    for _, sampled_batch in enumerate(valloader):
+        img = sampled_batch["image"]
+        lab = sampled_batch["label"]
+
+        # ensure numpy
+        if isinstance(img, torch.Tensor): img = img.cpu().numpy()
+        if isinstance(lab, torch.Tensor): lab = lab.cpu().numpy()
+
+        # ---- expand to (D,H,W) if needed ----
+        if img.ndim == 2:  # (H,W)
+            img = img[None, ...]
+        if lab.ndim == 2:  # (H,W)
+            lab = lab[None, ...]
+
+        metric_i = test_single_volume(img, lab, model, classes=num_classes, patch_size=patch_size)
         metric_list += np.array(metric_i)
 
-    metric_list = metric_list / len(valloader.dataset)  # average over dataset
+    metric_list = metric_list / len(valloader)
 
-    # logging per-class
     if writer is not None and iter_num is not None:
         for class_i in range(num_classes - 1):
-            writer.add_scalar(f'info/val_{class_i+1}_dice',  metric_list[class_i, 0], iter_num)
-            writer.add_scalar(f'info/val_{class_i+1}_hd95',  metric_list[class_i, 1], iter_num)
+            writer.add_scalar(f'info/val_{class_i+1}_dice', metric_list[class_i, 0], iter_num)
+            writer.add_scalar(f'info/val_{class_i+1}_hd95', metric_list[class_i, 1], iter_num)
 
-    mean_dice = np.mean(metric_list, axis=0)[0]
-    mean_hd95 = np.mean(metric_list, axis=0)[1]
-    if writer is not None and iter_num is not None:
+        mean_dice = float(np.mean(metric_list, axis=0)[0])
+        mean_hd95 = float(np.mean(metric_list, axis=0)[1])
         writer.add_scalar('info/val_mean_dice', mean_dice, iter_num)
         writer.add_scalar('info/val_mean_hd95', mean_hd95, iter_num)
-    return float(mean_dice), float(mean_hd95)
+    else:
+        mean_dice = float(np.mean(metric_list, axis=0)[0])
+        mean_hd95 = float(np.mean(metric_list, axis=0)[1])
+
+    return mean_dice, mean_hd95
+
 
 def train(args, snapshot_path):
     base_lr = args.base_lr

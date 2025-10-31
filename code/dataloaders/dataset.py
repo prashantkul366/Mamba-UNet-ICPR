@@ -99,7 +99,9 @@ class BUSIDataset(Dataset):
         # map split -> folder names
         sub = "train" if split == "train" else "test"
         self.img_dir = os.path.join(self._base_dir, sub, "images")
+        print(f"Train/val Image Path: {self.img_dir}")
         self.msk_dir = os.path.join(self._base_dir, sub, "masks")
+        print(f"Train/val Mask Path: {self.msk_dir}")
 
         # build list of basenames that have both image and mask
         img_paths = sorted(glob(os.path.join(self.img_dir, "*.png")))
