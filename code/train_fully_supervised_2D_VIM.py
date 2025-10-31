@@ -171,7 +171,7 @@ def train(args, snapshot_path):
 
     model = VIM_seg(config, img_size=args.patch_size,
                      num_classes=args.num_classes).cuda()
-    model.load_from(config)
+    # model.load_from(config)
 
 
     # db_train = BaseDataSets(base_dir=args.root_path, split="train", num=labeled_slice, transform=transforms.Compose([
