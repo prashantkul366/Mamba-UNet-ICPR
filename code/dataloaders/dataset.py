@@ -77,7 +77,86 @@ class BaseDataSets(Dataset):
         sample["idx"] = idx
         return sample
 
-# ---- ADD THIS IN dataset.py (e.g., under your other Dataset classes) ----
+# # ---- ADD THIS IN dataset.py (e.g., under your other Dataset classes) ----
+# class BUSIDataset(Dataset):
+#     """
+#     PNG-based dataset for BUSI.
+#     Expects:
+#       <root>/train/images/*.png, <root>/train/masks/*.png
+#       <root>/test/images/*.png,  <root>/test/masks/*.png
+#     """
+#     def __init__(self, base_dir, split="train", num=None, transform=None,
+#                  ops_weak=None, ops_strong=None):
+#         self._base_dir = base_dir
+#         self.split = split
+#         self.transform = transform
+#         self.ops_weak = ops_weak
+#         self.ops_strong = ops_strong
+
+#         assert bool(ops_weak) == bool(ops_strong), \
+#             "For using CTAugment learned policies, provide both weak and strong batch augmentation policy"
+
+#         # map split -> folder names
+#         sub = "train" if split == "train" else "test"
+#         self.img_dir = os.path.join(self._base_dir, sub, "images")
+#         print(f"Train/val Image Path: {self.img_dir}")
+#         self.msk_dir = os.path.join(self._base_dir, sub, "masks")
+#         print(f"Train/val Mask Path: {self.msk_dir}")
+
+#         # build list of basenames that have both image and mask
+#         img_paths = sorted(glob(os.path.join(self.img_dir, "*.png")))
+#         sample_list = []
+#         for ip in img_paths:
+#             base = os.path.basename(ip)
+#             mp = os.path.join(self.msk_dir, base)
+#             if os.path.exists(mp):
+#                 sample_list.append(base)
+
+#         # if num is not None and split == "train":
+#         #     sample_list = sample_list[:num]
+
+#         if self.split == "train" and isinstance(num, int) and num > 0:
+#             self.sample_list = self.sample_list[:num]
+
+#         self.sample_list = sample_list
+#         print(f"[BUSIDataset] {split} total {len(self.sample_list)} samples")
+
+#     def __len__(self):
+#         return len(self.sample_list)
+
+#     def __getitem__(self, idx):
+#         fname = self.sample_list[idx]
+#         imp = os.path.join(self.img_dir, fname)
+#         mpp = os.path.join(self.msk_dir, fname)
+
+#         # read as grayscale
+#         # cv2 returns uint8 [0..255]
+#         image = cv2.imread(imp, cv2.IMREAD_GRAYSCALE)
+#         mask  = cv2.imread(mpp, cv2.IMREAD_GRAYSCALE)
+
+#         if image is None:
+#             raise FileNotFoundError(f"Image not found: {imp}")
+#         if mask is None:
+#             raise FileNotFoundError(f"Mask not found: {mpp}")
+
+#         # normalize image to [0,1] float32
+#         image = (image.astype(np.float32) / 255.0)
+#         # binarize mask to {0,1} uint8
+#         mask = (mask > 0).astype(np.uint8)
+
+#         sample = {"image": image, "label": mask}
+
+#         if self.split == "train":
+#             # follow your convention: transforms only in train
+#             if None not in (self.ops_weak, self.ops_strong):
+#                 sample = self.transform(sample, self.ops_weak, self.ops_strong)
+#             else:
+#                 sample = self.transform(sample)
+
+#         # in val/test, keep numpy arrays (your val loop expects np arrays)
+#         sample["idx"] = idx
+#         return sample
+
 class BUSIDataset(Dataset):
     """
     PNG-based dataset for BUSI.
@@ -96,29 +175,25 @@ class BUSIDataset(Dataset):
         assert bool(ops_weak) == bool(ops_strong), \
             "For using CTAugment learned policies, provide both weak and strong batch augmentation policy"
 
-        # map split -> folder names
         sub = "train" if split == "train" else "test"
         self.img_dir = os.path.join(self._base_dir, sub, "images")
-        print(f"Train/val Image Path: {self.img_dir}")
         self.msk_dir = os.path.join(self._base_dir, sub, "masks")
-        print(f"Train/val Mask Path: {self.msk_dir}")
+        print(f"Train/val Image Path: {self.img_dir}")
+        print(f"Train/val Mask Path:  {self.msk_dir}")
 
         # build list of basenames that have both image and mask
         img_paths = sorted(glob(os.path.join(self.img_dir, "*.png")))
         sample_list = []
         for ip in img_paths:
             base = os.path.basename(ip)
-            mp = os.path.join(self.msk_dir, base)
-            if os.path.exists(mp):
+            if os.path.exists(os.path.join(self.msk_dir, base)):
                 sample_list.append(base)
 
-        # if num is not None and split == "train":
-        #     sample_list = sample_list[:num]
-
+        # assign first, then optionally cap
+        self.sample_list = sample_list
         if self.split == "train" and isinstance(num, int) and num > 0:
             self.sample_list = self.sample_list[:num]
 
-        self.sample_list = sample_list
         print(f"[BUSIDataset] {split} total {len(self.sample_list)} samples")
 
     def __len__(self):
@@ -129,33 +204,32 @@ class BUSIDataset(Dataset):
         imp = os.path.join(self.img_dir, fname)
         mpp = os.path.join(self.msk_dir, fname)
 
-        # read as grayscale
-        # cv2 returns uint8 [0..255]
         image = cv2.imread(imp, cv2.IMREAD_GRAYSCALE)
         mask  = cv2.imread(mpp, cv2.IMREAD_GRAYSCALE)
-
         if image is None:
             raise FileNotFoundError(f"Image not found: {imp}")
         if mask is None:
             raise FileNotFoundError(f"Mask not found: {mpp}")
 
-        # normalize image to [0,1] float32
         image = (image.astype(np.float32) / 255.0)
-        # binarize mask to {0,1} uint8
-        mask = (mask > 0).astype(np.uint8)
+        mask  = (mask > 0).astype(np.uint8)
 
         sample = {"image": image, "label": mask}
 
         if self.split == "train":
-            # follow your convention: transforms only in train
+            # training path: apply your RandomGenerator (returns tensors)
             if None not in (self.ops_weak, self.ops_strong):
                 sample = self.transform(sample, self.ops_weak, self.ops_strong)
             else:
                 sample = self.transform(sample)
+        else:
+            # val/test path: make a 1-slice "volume" for test_single_volume (D,H,W)
+            sample["image"] = np.expand_dims(image, axis=0)  # (1,H,W)
+            sample["label"] = np.expand_dims(mask,  axis=0)  # (1,H,W)
 
-        # in val/test, keep numpy arrays (your val loop expects np arrays)
         sample["idx"] = idx
         return sample
+
 
 class BaseDataSets_Synapse(Dataset):
     def __init__(

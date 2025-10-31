@@ -197,7 +197,7 @@ def train(args, snapshot_path):
     )
     db_val = BUSIDataset(
         base_dir=args.root_path,
-        split="test",      # use your test folder as validation
+        split="test",
         num=None,
         transform=None
     )
