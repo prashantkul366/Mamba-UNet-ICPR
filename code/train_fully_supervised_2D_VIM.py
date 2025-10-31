@@ -25,7 +25,8 @@ from networks.vision_mamba import MambaUnet as VIM_seg
 from config import get_config
 
 from dataloaders import utils
-from dataloaders.dataset import BaseDataSets, RandomGenerator, BaseDataSets_Synapse
+# from dataloaders.dataset import BaseDataSets, RandomGenerator, BaseDataSets_Synapse
+from dataloaders.dataset import BUSIDataset, RandomGenerator
 # from networks.net_factory import net_factory
 from utils import losses, metrics, ramps
 from val_2D import test_single_volume, test_single_volume_ds
@@ -81,6 +82,8 @@ parser.add_argument('--patch_size', type=list,  default=[224, 224],
 parser.add_argument('--seed', type=int,  default=1337, help='random seed')
 parser.add_argument('--labeled_num', type=int, default=140,
                     help='labeled data')
+parser.add_argument('--early_stop_patience', type=int, default=100,
+                    help='stop if no val Dice improvement for N epochs')
 args = parser.parse_args()
 
 
@@ -112,21 +115,49 @@ config = get_config(args)
 #         # Use full set if labeled_num >= total, else cap to labeled_num
 #         return min(patiens_num, total)
 
-def patients_to_slices(dataset_root, labeled_num):
-    """For ACDC use the hard map; for BUSI (and others) use train list length."""
-    dataset_root = str(dataset_root)
-    if "ACDC" in dataset_root:
-        ref_dict = {"3": 68, "7": 136, "14": 256, "21": 396,
-                    "28": 512, "35": 664, "140": 1312}
-        return ref_dict[str(labeled_num)]
-    else:
-        list_file = os.path.join(dataset_root, "train_slices.list")
-        if not os.path.isfile(list_file):
-            raise FileNotFoundError(f"Missing {list_file}. Did you convert BUSI to H5 + lists?")
-        with open(list_file, "r") as f:
-            total = len([x.strip() for x in f if x.strip()])
-        return min(labeled_num, total)  # or just `return total` to always use all
+# def patients_to_slices(dataset_root, labeled_num):
+#     """For ACDC use the hard map; for BUSI (and others) use train list length."""
+#     dataset_root = str(dataset_root)
+#     if "ACDC" in dataset_root:
+#         ref_dict = {"3": 68, "7": 136, "14": 256, "21": 396,
+#                     "28": 512, "35": 664, "140": 1312}
+#         return ref_dict[str(labeled_num)]
+#     else:
+#         list_file = os.path.join(dataset_root, "train_slices.list")
+#         if not os.path.isfile(list_file):
+#             raise FileNotFoundError(f"Missing {list_file}. Did you convert BUSI to H5 + lists?")
+#         with open(list_file, "r") as f:
+#             total = len([x.strip() for x in f if x.strip()])
+#         return min(labeled_num, total)  # or just `return total` to always use all
 
+@torch.no_grad()
+def run_validation(model, valloader, num_classes, patch_size, writer=None, iter_num=None):
+    model.eval()
+    metric_list = 0.0
+    for i_batch, sampled_batch in enumerate(valloader):
+        metric_i = test_single_volume(
+            sampled_batch["image"],
+            sampled_batch["label"],
+            model,
+            classes=num_classes,
+            patch_size=patch_size
+        )
+        metric_list += np.array(metric_i)
+
+    metric_list = metric_list / len(valloader.dataset)  # average over dataset
+
+    # logging per-class
+    if writer is not None and iter_num is not None:
+        for class_i in range(num_classes - 1):
+            writer.add_scalar(f'info/val_{class_i+1}_dice',  metric_list[class_i, 0], iter_num)
+            writer.add_scalar(f'info/val_{class_i+1}_hd95',  metric_list[class_i, 1], iter_num)
+
+    mean_dice = np.mean(metric_list, axis=0)[0]
+    mean_hd95 = np.mean(metric_list, axis=0)[1]
+    if writer is not None and iter_num is not None:
+        writer.add_scalar('info/val_mean_dice', mean_dice, iter_num)
+        writer.add_scalar('info/val_mean_hd95', mean_hd95, iter_num)
+    return float(mean_dice), float(mean_hd95)
 
 def train(args, snapshot_path):
     base_lr = args.base_lr
@@ -134,7 +165,7 @@ def train(args, snapshot_path):
     batch_size = args.batch_size
     max_iterations = args.max_iterations
 
-    labeled_slice = patients_to_slices(args.root_path, args.labeled_num)
+    # labeled_slice = patients_to_slices(args.root_path, args.labeled_num)
 
     # model = net_factory(net_type=args.model, in_chns=1, class_num=num_classes)
 
@@ -143,10 +174,23 @@ def train(args, snapshot_path):
     model.load_from(config)
 
 
-    db_train = BaseDataSets(base_dir=args.root_path, split="train", num=labeled_slice, transform=transforms.Compose([
-        RandomGenerator(args.patch_size)
-    ]))
-    db_val = BaseDataSets(base_dir=args.root_path, split="val")
+    # db_train = BaseDataSets(base_dir=args.root_path, split="train", num=labeled_slice, transform=transforms.Compose([
+    #     RandomGenerator(args.patch_size)
+    # ]))
+    # db_val = BaseDataSets(base_dir=args.root_path, split="val")
+
+    db_train = BUSIDataset(
+    base_dir=args.root_path,
+    split="train",
+    num=args.labeled_num if args.labeled_num is not None else None,
+    transform=RandomGenerator(args.patch_size)
+    )
+    db_val = BUSIDataset(
+        base_dir=args.root_path,
+        split="test",      # use your test folder as validation
+        num=None,
+        transform=None
+    )
 
     def worker_init_fn(worker_id):
         random.seed(args.seed + worker_id)
@@ -169,12 +213,24 @@ def train(args, snapshot_path):
     iter_num = 0
     max_epoch = max_iterations // len(trainloader) + 1
     best_performance = 0.0
+    epochs_no_improve = 0
+    patience = args.early_stop_patience  # or patience = 100
+
     iterator = tqdm(range(max_epoch), ncols=70)
     for epoch_num in iterator:
         for i_batch, sampled_batch in enumerate(trainloader):
 
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
+            
+            in_chans = 3
+            if hasattr(config.MODEL, "VSSM") and hasattr(config.MODEL.VSSM, "IN_CHANS"):
+                in_chans = config.MODEL.VSSM.IN_CHANS
+            elif hasattr(config.MODEL, "SWIN") and hasattr(config.MODEL.SWIN, "IN_CHANS"):
+                in_chans = config.MODEL.SWIN.IN_CHANS
+
+            if volume_batch.shape[1] == 1 and in_chans == 3:
+                volume_batch = volume_batch.repeat(1, 3, 1, 1)
 
             outputs = model(volume_batch)
             outputs_soft = torch.softmax(outputs, dim=1)
@@ -200,49 +256,59 @@ def train(args, snapshot_path):
                 'iteration %d : loss : %f, loss_ce: %f, loss_dice: %f' %
                 (iter_num, loss.item(), loss_ce.item(), loss_dice.item()))
 
+            # if iter_num % 20 == 0:
+            #     image = volume_batch[1, 0:1, :, :]
+            #     writer.add_image('train/Image', image, iter_num)
+            #     outputs = torch.argmax(torch.softmax(
+            #         outputs, dim=1), dim=1, keepdim=True)
+            #     writer.add_image('train/Prediction',
+            #                      outputs[1, ...] * 50, iter_num)
+            #     labs = label_batch[1, ...].unsqueeze(0) * 50
+            #     writer.add_image('train/GroundTruth', labs, iter_num)
+
             if iter_num % 20 == 0:
-                image = volume_batch[1, 0:1, :, :]
-                writer.add_image('train/Image', image, iter_num)
-                outputs = torch.argmax(torch.softmax(
-                    outputs, dim=1), dim=1, keepdim=True)
-                writer.add_image('train/Prediction',
-                                 outputs[1, ...] * 50, iter_num)
-                labs = label_batch[1, ...].unsqueeze(0) * 50
-                writer.add_image('train/GroundTruth', labs, iter_num)
+                image_vis = volume_batch[0, 0:1]
+                writer.add_image('train/Image', image_vis, iter_num)
 
-            if iter_num > 0 and iter_num % 200 == 0:
-                model.eval()
-                metric_list = 0.0
-                for i_batch, sampled_batch in enumerate(valloader):
-                    metric_i = test_single_volume(
-                        sampled_batch["image"], sampled_batch["label"], model, classes=num_classes, patch_size=args.patch_size)
-                    metric_list += np.array(metric_i)
-                metric_list = metric_list / len(db_val)
-                for class_i in range(num_classes-1):
-                    writer.add_scalar('info/val_{}_dice'.format(class_i+1),
-                                      metric_list[class_i, 0], iter_num)
-                    writer.add_scalar('info/val_{}_hd95'.format(class_i+1),
-                                      metric_list[class_i, 1], iter_num)
+                pred = torch.argmax(outputs_soft, dim=1, keepdim=True).float()
+                writer.add_image('train/Prediction', pred[0] / (num_classes - 1), iter_num)  # 0/1 for binary
 
-                performance = np.mean(metric_list, axis=0)[0]
+                labs = label_batch[0].unsqueeze(0).float()
+                writer.add_image('train/GroundTruth', labs, iter_num)  # already 0/1 after float()
 
-                mean_hd95 = np.mean(metric_list, axis=0)[1]
-                writer.add_scalar('info/val_mean_dice', performance, iter_num)
-                writer.add_scalar('info/val_mean_hd95', mean_hd95, iter_num)
+            # if iter_num > 0 and iter_num % 200 == 0:
+            #     model.eval()
+            #     metric_list = 0.0
+            #     for i_batch, sampled_batch in enumerate(valloader):
+            #         metric_i = test_single_volume(
+            #             sampled_batch["image"], sampled_batch["label"], model, classes=num_classes, patch_size=args.patch_size)
+            #         metric_list += np.array(metric_i)
+            #     metric_list = metric_list / len(db_val)
+            #     for class_i in range(num_classes-1):
+            #         writer.add_scalar('info/val_{}_dice'.format(class_i+1),
+            #                           metric_list[class_i, 0], iter_num)
+            #         writer.add_scalar('info/val_{}_hd95'.format(class_i+1),
+            #                           metric_list[class_i, 1], iter_num)
 
-                if performance > best_performance:
-                    best_performance = performance
-                    save_mode_path = os.path.join(snapshot_path,
-                                                  'iter_{}_dice_{}.pth'.format(
-                                                      iter_num, round(best_performance, 4)))
-                    save_best = os.path.join(snapshot_path,
-                                             '{}_best_model.pth'.format(args.model))
-                    torch.save(model.state_dict(), save_mode_path)
-                    torch.save(model.state_dict(), save_best)
+            #     performance = np.mean(metric_list, axis=0)[0]
 
-                logging.info(
-                    'iteration %d : mean_dice : %f mean_hd95 : %f' % (iter_num, performance, mean_hd95))
-                model.train()
+            #     mean_hd95 = np.mean(metric_list, axis=0)[1]
+            #     writer.add_scalar('info/val_mean_dice', performance, iter_num)
+            #     writer.add_scalar('info/val_mean_hd95', mean_hd95, iter_num)
+
+            #     if performance > best_performance:
+            #         best_performance = performance
+            #         save_mode_path = os.path.join(snapshot_path,
+            #                                       'iter_{}_dice_{}.pth'.format(
+            #                                           iter_num, round(best_performance, 4)))
+            #         save_best = os.path.join(snapshot_path,
+            #                                  '{}_best_model.pth'.format(args.model))
+            #         torch.save(model.state_dict(), save_mode_path)
+            #         torch.save(model.state_dict(), save_best)
+
+            #     logging.info(
+            #         'iteration %d : mean_dice : %f mean_hd95 : %f' % (iter_num, performance, mean_hd95))
+            #     model.train()
 
             if iter_num % 3000 == 0:
                 save_mode_path = os.path.join(
@@ -252,6 +318,29 @@ def train(args, snapshot_path):
 
             if iter_num >= max_iterations:
                 break
+
+        mean_dice, mean_hd95 = run_validation(model, valloader, num_classes, args.patch_size,
+                                      writer=writer, iter_num=iter_num)
+
+        logging.info(f'[epoch {epoch_num}] mean_dice: {mean_dice:.4f}  mean_hd95: {mean_hd95:.4f}')
+        model.train()
+
+        if mean_dice > best_performance:
+            best_performance = mean_dice
+            epochs_no_improve = 0
+            save_mode_path = os.path.join(snapshot_path, f'iter_{iter_num}_dice_{round(best_performance, 4)}.pth')
+            save_best = os.path.join(snapshot_path, f'{args.model}_best_model.pth')
+            torch.save(model.state_dict(), save_mode_path)
+            torch.save(model.state_dict(), save_best)
+        else:
+            epochs_no_improve += 1
+
+        # early stop check
+        if epochs_no_improve >= patience:
+            logging.info(f"Early stopping: no val Dice improvement for {patience} epochs. Best Dice={best_performance:.4f}")
+            writer.close()
+            return "Training Finished (Early Stopped)!"
+
         if iter_num >= max_iterations:
             iterator.close()
             break

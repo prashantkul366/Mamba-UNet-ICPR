@@ -48,6 +48,9 @@ parser.add_argument('--patch_size', type=list,  default=[256, 256],
 parser.add_argument('--seed', type=int,  default=1337, help='random seed')
 parser.add_argument('--labeled_num', type=int, default=140,
                     help='labeled data')
+parser.add_argument('--early_stop_patience', type=int, default=100,
+                    help='stop if no val Dice improvement for N epochs')
+
 args = parser.parse_args()
 
 

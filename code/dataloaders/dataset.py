@@ -77,6 +77,81 @@ class BaseDataSets(Dataset):
         sample["idx"] = idx
         return sample
 
+# ---- ADD THIS IN dataset.py (e.g., under your other Dataset classes) ----
+class BUSIDataset(Dataset):
+    """
+    PNG-based dataset for BUSI.
+    Expects:
+      <root>/train/images/*.png, <root>/train/masks/*.png
+      <root>/test/images/*.png,  <root>/test/masks/*.png
+    """
+    def __init__(self, base_dir, split="train", num=None, transform=None,
+                 ops_weak=None, ops_strong=None):
+        self._base_dir = base_dir
+        self.split = split
+        self.transform = transform
+        self.ops_weak = ops_weak
+        self.ops_strong = ops_strong
+
+        assert bool(ops_weak) == bool(ops_strong), \
+            "For using CTAugment learned policies, provide both weak and strong batch augmentation policy"
+
+        # map split -> folder names
+        sub = "train" if split == "train" else "test"
+        self.img_dir = os.path.join(self._base_dir, sub, "images")
+        self.msk_dir = os.path.join(self._base_dir, sub, "masks")
+
+        # build list of basenames that have both image and mask
+        img_paths = sorted(glob(os.path.join(self.img_dir, "*.png")))
+        sample_list = []
+        for ip in img_paths:
+            base = os.path.basename(ip)
+            mp = os.path.join(self.msk_dir, base)
+            if os.path.exists(mp):
+                sample_list.append(base)
+
+        if num is not None and split == "train":
+            sample_list = sample_list[:num]
+
+        self.sample_list = sample_list
+        print(f"[BUSIDataset] {split} total {len(self.sample_list)} samples")
+
+    def __len__(self):
+        return len(self.sample_list)
+
+    def __getitem__(self, idx):
+        fname = self.sample_list[idx]
+        imp = os.path.join(self.img_dir, fname)
+        mpp = os.path.join(self.msk_dir, fname)
+
+        # read as grayscale
+        # cv2 returns uint8 [0..255]
+        image = cv2.imread(imp, cv2.IMREAD_GRAYSCALE)
+        mask  = cv2.imread(mpp, cv2.IMREAD_GRAYSCALE)
+
+        if image is None:
+            raise FileNotFoundError(f"Image not found: {imp}")
+        if mask is None:
+            raise FileNotFoundError(f"Mask not found: {mpp}")
+
+        # normalize image to [0,1] float32
+        image = (image.astype(np.float32) / 255.0)
+        # binarize mask to {0,1} uint8
+        mask = (mask > 0).astype(np.uint8)
+
+        sample = {"image": image, "label": mask}
+
+        if self.split == "train":
+            # follow your convention: transforms only in train
+            if None not in (self.ops_weak, self.ops_strong):
+                sample = self.transform(sample, self.ops_weak, self.ops_strong)
+            else:
+                sample = self.transform(sample)
+
+        # in val/test, keep numpy arrays (your val loop expects np arrays)
+        sample["idx"] = idx
+        return sample
+
 class BaseDataSets_Synapse(Dataset):
     def __init__(
         self,
