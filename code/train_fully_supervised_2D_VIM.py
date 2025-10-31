@@ -278,9 +278,9 @@ def train(args, snapshot_path):
             writer.add_scalar('info/loss_ce', loss_ce, iter_num)
             writer.add_scalar('info/loss_dice', loss_dice, iter_num)
 
-            logging.info(
-                'iteration %d : loss : %f, loss_ce: %f, loss_dice: %f' %
-                (iter_num, loss.item(), loss_ce.item(), loss_dice.item()))
+            # logging.info(
+            #     'iteration %d : loss : %f, loss_ce: %f, loss_dice: %f' %
+            #     (iter_num, loss.item(), loss_ce.item(), loss_dice.item()))
 
             # if iter_num % 20 == 0:
             #     image = volume_batch[1, 0:1, :, :]
@@ -345,6 +345,7 @@ def train(args, snapshot_path):
             if iter_num >= max_iterations:
                 break
 
+        # print("here")
         mean_dice, mean_hd95 = run_validation(model, valloader, num_classes, args.patch_size,
                                       writer=writer, iter_num=iter_num)
 
