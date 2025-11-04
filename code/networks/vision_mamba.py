@@ -38,7 +38,7 @@ class MambaUnet(nn.Module):
                                 drop_path_rate=config.MODEL.DROP_PATH_RATE,
                                 patch_norm=config.MODEL.SWIN.PATCH_NORM,
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT)
-
+        print("---init vision mamba unet---")
     def forward(self, x):
         if x.size()[1] == 1:
             x = x.repeat(1,3,1,1)

@@ -707,6 +707,7 @@ class VSSM(nn.Module):
         self.dims = dims
         self.final_upsample = final_upsample
 
+        print("---VSSM Model---")
         # PATCH EMBEDDING
         self.patch_embed = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
             norm_layer=norm_layer if patch_norm else None)
