@@ -19,7 +19,8 @@ from scipy import ndimage
 
 ####################################
 # from .mamba_sys import VSSM
-from .mamba_sys_modified import VSSM
+from .mamba_sys_Conv_Dec import VSSM
+# from .mamba_sys_modified import VSSM
 
 ##################################
 
@@ -32,7 +33,8 @@ class MambaUnet(nn.Module):
         self.zero_head = zero_head
         self.config = config
 
-        print("----Using Modified MambaUnet with KAN layers----")
+        # print("----Using Modified MambaUnet with KAN layers----")
+        print("----Using Modified MambaUnet with Conv decoder layers----")
         self.mamba_unet =  VSSM(
                                 patch_size=config.MODEL.VSSM.PATCH_SIZE,
                                 in_chans=config.MODEL.VSSM.IN_CHANS,

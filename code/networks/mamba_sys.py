@@ -707,6 +707,7 @@ class VSSM(nn.Module):
         self.dims = dims
         self.final_upsample = final_upsample
 
+        # PATCH EMBEDDING
         self.patch_embed = PatchEmbed2D(patch_size=patch_size, in_chans=in_chans, embed_dim=self.embed_dim,
             norm_layer=norm_layer if patch_norm else None)
 
@@ -729,6 +730,7 @@ class VSSM(nn.Module):
             )
             self.layers.append(layer)
 
+        ###############################################################################################################################
         # build decoder layers
         self.layers_up = nn.ModuleList()
         self.concat_back_dim = nn.ModuleList()
@@ -751,7 +753,8 @@ class VSSM(nn.Module):
                 )
             self.layers_up.append(layer_up)
             self.concat_back_dim.append(concat_linear)
-
+        ###########################################################################################################################################
+        
         self.norm = norm_layer(self.num_features)
         self.norm_up = norm_layer(self.embed_dim)
 
